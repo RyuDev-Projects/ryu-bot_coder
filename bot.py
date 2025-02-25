@@ -34,6 +34,28 @@ def escape_markdown(text):
     escape_chars = r'_*[]()~`>#+-=|{}.!'
     return re.sub(f'([{re.escape(escape_chars)}])', r'\\\1', text)
 
+async def send_long_message(update: Update, text: str, max_len: int = 4096):
+  """
+  Memecah pesan panjang menjadi beberapa bagian dan mengirimkannya satu per satu.
+  """
+  messages = []
+  while len(text) > 0:
+    if len(text) > max_len:
+      split_pos = text.rfind('\n', 0, max_len)
+      if split_pos == -1:
+        split_pos = max_len
+      messages.append(text[:split_pos])
+      text = text[split_pos:].lstrip()
+    else:
+      messages.append(text)
+      break
+
+  for msg in messages:
+    if "```" in msg:
+      await update.message.reply_markdown_v2(msg)
+    else:
+      await update.message.reply_text(msg)
+
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
   user_input = update.message.text
   chat_type = update.message.chat.type
@@ -92,9 +114,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         parts[i] = escape_markdown(parts[i])
       answer = "```".join(parts)
 
-      await update.message.reply_markdown_v2(answer)
-    else:
-      await update.message.reply_text(answer)
+    await send_long_message(update, answer)
 
   except Exception as e:
     await update.message.reply_text(f"⚠️ Terjadi error: {str(e)}")
