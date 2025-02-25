@@ -104,7 +104,7 @@ async def handle_message(update: Update, context):
     bot_response = response_data.get('choices', [{}])[0].get('message', {}).get('content', 'Gagal membuat respon.')
     dialog_context[chat_id].append({'role': 'assistant', 'content': bot_response})
     # Teruskan respon ke chat
-    await update.message.reply_text(bot_response)
+    await update.message.reply_text(bot_response, parse_mode='Markdown')
 
   # Tmbahakn aksi mengirim
   await context.bot.send_chat_action(chat_id=chat_id, action=ChatAction.TYPING)
