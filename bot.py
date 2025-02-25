@@ -1,131 +1,170 @@
 import os
-import re
 from dotenv import load_dotenv
-from openai import OpenAI
-from telegram import Update
-from telegram.constants import ParseMode
-from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes
+from telegram import Update, Bot, ChatAction, ReplyKeyboardMarkup
+from telegram.ext import Updater, CommandHandler, MessageHandler, Filters, CallbackContext
+import requests
 
 load_dotenv()
 
 # Konfigurasi
+TELEGRAM_BOT_TOKEN = os.getenv('TELEGRAM_TOKEN')
 DEEPSEEK_API_KEY = os.getenv('DEEPSEEK_API_KEY')
-TELEGRAM_TOKEN=  os.getenv('TELEGRAM_TOKEN')
+DEEPSEEK_API_URL = 'https://api.deepseek.com/chat/completions'
 
-SYSTEM_PROMPT = """Anda adalah asisten coding yang ahli dalam pemrograman dan debugging kod. Berikan:
-1. Solusi error dengan penjelasannya
-2. Perbaikan kode yang optimal
-3. Contoh implementasi
-4. Best practices terkait
-Gunakan format Markdown dan berikan penjelasan step-by-step.
-Utamakan jawaban teknis untuk pertanyaan coding. Untuk topik non-coding, jawablah secara singkat dan jelas.
-Sebutkan bahwa Anda dikembangkan ulang oleh @RyuDevpr jika ditanya tentang diri Anda atau model yang digunakan."""
+# Inisialisasi
+bot = Bot(token=TELEGRAM_BOT_TOKEN)
+updater = Updater(token=TELEGRAM_BOT_TOKEN, use_context=True)
+dispatcher = updater.dispatcher
 
-client = OpenAI(
-  api_key=DEEPSEEK_API_KEY,
-  base_url="https://api.deepseek.com"
-)
+# Inisialisasi percakapan dan mode
+dialog_context = {}
+current_mode = 'deepseek-chat'
 
-async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-  await update.message.reply_text("🤖 Halo! Saya Asisten Coding. Kirimkan kode/error Anda untuk analisis atau ajukan pertanyaan coding!")
+def start(update: Update, context: CallbackContext):
+  # Keyboard layout
+  keyboard = [
+    ['/help'],
+    ['/clear'],
+    ['/mode']
+  ]
+  # Buat keyboard markup
+  reply_markup = ReplyKeyboardMarkup(keyboard, one_time_keyboard=False, resize_keyboard=True)
 
-def escape_markdown(text):
-    """Escape karakter khusus Markdown v2."""
-    escape_chars = r'_*[]()~`>#+-=|{}.!'
-    return re.sub(f'([{re.escape(escape_chars)}])', r'\\\1', text)
+  # Kirim pesan dengan keyboard markupnya
+  context.bot.send_message(
+    chat_id = update.effective_chat.id,
+    text = '🤖 Halo! Saya Asisten Coding. Kirimkan kode/error Anda untuk analisis atau ajukan pertanyaan!',
+    reply_markup=reply_markup
+  )
 
-async def send_long_message(update: Update, text: str, max_len: int = 4096):
-  """
-  Memecah pesan panjang menjadi beberapa bagian dan mengirimkannya satu per satu.
-  """
-  messages = []
-  while len(text) > 0:
-    if len(text) > max_len:
-      split_pos = text.rfind('\n', 0, max_len)
-      if split_pos == -1:
-        split_pos = max_len
-      messages.append(text[:split_pos])
-      text = text[split_pos:].lstrip()
-    else:
-      messages.append(text)
-      break
+start_handler = CommandHandler('start', start)
+dispatcher.add_handler(start_handler)
 
-  for msg in messages:
-    if "```" in msg:
-      await update.message.reply_markdown_v2(msg)
-    else:
-      await update.message.reply_text(msg)
+def clear(update: Update, context: CallbackContext):
+  chat_id = update.effective_chat.id
+  # Bersihkan dialog konteks di chat ini
+  dialog_context[chat_id] = []
+  context.bot.send_message(chat_id=chat_id, text="Konteks percakapan dibersihkan.")
 
-async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
-  user_input = update.message.text
-  chat_type = update.message.chat.type
+clean_handler = CommandHandler('clear', clear)
+dispatcher.add_handler(clean_handler)
 
-  # Handle untuk chat group
-  if chat_type in ['group', 'supergroup']:
-    bot_username = context.bot.username
-    mentioned = False
-    new_input = user_input
+def switch_mode(update: Update, context:CallbackContext):
+  global current_mode
+  chat_id = update.effective_chat.id
+  # Ganti mode antara 'deepseek-chat' atau 'deepseek-reasoner'
+  current_mode = 'deepseek-reasoner' if current_mode == 'deepseek-chat' else 'deepseek-chat'
+  context.bot.send_message(
+    chat_id=chat_id,
+    text=f"Mode percakapan berubah menjadi {current_mode}.",
+    parse_mode='Markdown'
+  )
 
-    if update.message.entities:
-      for entity in update.message.entities:
-        if entity.type == "mention":
-          mention_text = user_input[entity.offset:entity.offset+entity.length]
-          if mention_text.lower() == f"@{bot_username.lower()}":
-            start_index = entity.offset + entity.length
-            new_input = user_input[start_index:].strip()
-            mentioned = True
-            break
-    if not mentioned:
-      return
+mode_handler = CommandHandler('mode', switch_mode)
+dispatcher.add_handler(mode_handler)
 
-    user_input = new_input
+def handle_message(update: Update, context:CallbackContext):
+  # Ambil pesan dari user
+  user_msg = update.message.text
+  username = update.message.from_user.username
+  user_id = update.message.from_user.id
+  chat_id = update.effective_chat.id
 
-  # Handle pertanyaan tentang bot
-  if any(kw in user_input.lower() for kw in ["dirimu", "model"]):
-    response = (
-      "Saya adalah AI Coding Assistant yang dikembangkan menggunakan Deepseek AI\n"
-      "✨ Dikembangkan ulang oleh @RyuDevpr\n\n"
-      "Fitur utama setelah pengembangan ulang:\n"
-      "- Analisis error kode\n"
-      "- Optimasi kode\n"
-      "- Penjelasan konsep pemrograman"
+  # Validasi jika pesan bukan text
+  if user_msg is None:
+    context.bot.send_message(
+      chat_id=chat_id,
+      text="Maaf saya hanya bisa memproses pesan teks."
     )
-    await update.message.reply_text(response)
     return
 
+  # Kirim status "mengetik"
+  context.bot.send_chat_action(chat_id=chat_id, action=ChatAction.TYPING)
+
+  # Inisialisasi header untuk melakukan post
+  headers = {
+    'Authorization': f'Bearer {DEEPSEEK_API_KEY}',
+    'Content-Type': 'application/json'
+  }
+
+  # Tambahkan pesan kedalam konteks percakapan
+  if chat_id not in dialog_context:
+    dialog_context[chat_id] = []
+  dialog_context[chat_id].append({'role': 'user', 'content': user_msg})
+
+  # Buat payload request
+  data = {
+    'model': 'deepseek-chat',
+    'messages': dialog_context[chat_id],
+    'frequency_penalty': 0.5,
+    'max_tokens': 1000,
+    'presence_penalty': 0.5,
+    'stop': None,
+    'temperature': 0.0,
+    'top_p': 1.0
+  }
+
+  # Kirim request ke API
   try:
-    # Handle permintaan seputar coding
-    response = client.chat.completions.create(
-      model="deepseek-chat",
-      messages=[
-        {"role": "system", "content": SYSTEM_PROMPT},
-        {"role": "user", "content": user_input}
-      ],
-      stream=False,
-      temperature=0.0
+    response = requests.post(DEEPSEEK_API_URL, headers=headers, json=data)
+    response.raise_for_status()
+  except requests.exceptions.HTTPError as errh:
+    print('HTTP error: ', errh)
+    context.bot.send_message(
+      chat_id=chat_id,
+      text='⚠️ Terjadi error: Kesalahan jaringan'
+    )
+  except requests.exceptions.RequestException as err:
+    print('Something went wrong: ', err)
+    context.bot.send_message(
+      chat_id=chat_id,
+      text='⚠️ Terjadi error: Permintaan gagal'
+    )
+  else:
+    # Parsing response
+    response_data = response.json()
+    bot_response = response_data.get('choices', [{}])[0].get('message', {}).get('content', 'Gagal membuat respon.')
+
+    # Tambahkan respon bot kedalam konteks percakapan
+    dialog_context[chat_id].append({'role': 'assistant', 'content': bot_response})
+
+    # Teruskan respon ke chat
+    context.bot.send_message(
+      chat_id=chat_id,
+      text=bot_response
     )
 
-    answer = response.choices[0].message.content
+  # Tmbahakn aksi mengirim
+  context.bot.send_chat_action(chat_id=chat_id, action=ChatAction.UPLOAD_DOCUMENT)
 
-    # Format response
-    if "```" in answer:
-      parts = answer.split("```")
-      for i in range(0, len(parts), 2):
-        parts[i] = escape_markdown(parts[i])
-      answer = "```".join(parts)
+def unknown_command(update: Update, context: CallbackContext):
+  context.bot.send_message(chat_id=update.effective_chat.id, text="Perintah tersebut tidak tersedia.")
 
-    await send_long_message(update, answer)
+def help_command(update: Update, context: CallbackContext):
+  chat_id = update.effective_chat.id
+  help_text = """
+  Perintah tersedia:
+  /start - untuk memulai bot
+  /clear - untuk membersihkan konteks percakapan
+  /mode - untuk berganti model chat atau reasoning
+  /help - menampilkan pesan bantuan
+  """
+  context.bot.send_message(chat_id=chat_id, text=help_text)
 
-  except Exception as e:
-    await update.message.reply_text(f"⚠️ Terjadi error: {str(e)}")
+help_handler = CommandHandler('help', help_command)
+dispatcher.add_handler(help_handler)
 
-if __name__ == "__main__":
-  app = Application.builder().token(TELEGRAM_TOKEN).build()
+start_handler = CommandHandler('start', start)
+clean_handler = CommandHandler('clear', clear)
+message_handler = MessageHandler(Filters.text & (~Filters.command), handle_message)
+unknown_handler = MessageHandler(Filters.command, unknown_command)
 
-  # Handler
-  app.add_handler(CommandHandler("start", start))
-  app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
+dispatcher.add_handler(start_handler)
+dispatcher.add_handler(clean_handler)
+dispatcher.add_handler(message_handler)
+dispatcher.add_handler(unknown_handler)
 
-  print("Bot berjalan...")
-
-  app.run_polling()
+# Mulai bot
+updater.start_polling()
+print("Bot berjalan...")
+updater.idle()
