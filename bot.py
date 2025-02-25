@@ -80,7 +80,6 @@ async def handle_message(update: Update, context):
     'model': 'deepseek-chat',
     'messages': dialog_context[chat_id],
     'frequency_penalty': 0.5,
-    'max_tokens': 1000,
     'presence_penalty': 0.5,
     'stop': None,
     'temperature': 0.0,
