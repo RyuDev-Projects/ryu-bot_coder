@@ -62,8 +62,24 @@ async def switch_mode(update: Update, context):
   await update.message.reply_text(f"Mode percakapan berubah menjadi {current_mode}.", parse_mode='Markdown')
 
 async def handle_message(update: Update, context):
-  # Ambil pesan dari user
-  user_msg = update.message.text
+  # Cek asal usel pesan
+  if update.effective_chat.type in ['group', 'supergroup']:
+    # Cek apakah bot di tag atau ada yang merply pesannya
+    is_mention = update.message.text and update.message.text.lower().startswith(context.bot.name.lower())
+    is_reply_to_bot = update.message.reply_to_message and update.message.reply_to_message.from_user.id == context.bot.id
+
+    # Jika bukan mention ATAU bukan reply ke bot, return
+    if not (is_mention or is_reply_to_bot):
+      return
+
+    # Hapus nama bot jika di-mention
+    if is_mention:
+      user_msg = update.message.text[len(context.bot.name):].strip()
+    else:
+      user_msg = update.message.text
+  else:
+    user_msg = update.message.text
+
   chat_id = update.effective_chat.id
 
   # Validasi jika pesan bukan text
@@ -83,6 +99,7 @@ async def handle_message(update: Update, context):
   # Tambahkan pesan kedalam konteks percakapan
   if chat_id not in dialog_context:
     dialog_context[chat_id] = []
+
   dialog_context[chat_id].append({'role': 'user', 'content': user_msg})
   dialog_context[chat_id] = dialog_context[chat_id][-MAX_CONTEXT_LENGTH:]  # Batasi konteks
 
@@ -144,7 +161,7 @@ def main():
   application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
   application.add_handler(MessageHandler(filters.COMMAND, unknown_command))
 
-  application.run_polling()
+  application.run_polling(allowed_updates=Update.ALL_TYPES)
   logger.info("Bot berjalan")
 
 if __name__ == '__main__':
