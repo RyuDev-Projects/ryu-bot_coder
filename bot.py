@@ -36,6 +36,27 @@ def escape_markdown(text):
 
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
   user_input = update.message.text
+  chat_type = update.message.chat.type
+
+  # Handle untuk chat group
+  if chat_type in ['group', 'supergroup']:
+    bot_username = context.bot.username
+    mentioned = False
+    new_input = user_input
+
+    if update.message.entities:
+      for entity in update.message.entities:
+        if entity.type == "mention":
+          mention_text = user_input[entity.offset:entity.offset+entity.length]
+          if mention_text.lower() == f"@{bot_username.lower()}":
+            start_index = entity.offset + entity.length
+            new_input = user_input[start_index:].strip()
+            mentioned = True
+            break
+    if not mentioned:
+      return
+
+    user_input = new_input
 
   # Handle pertanyaan tentang bot
   if any(kw in user_input.lower() for kw in ["dirimu", "model"]):
