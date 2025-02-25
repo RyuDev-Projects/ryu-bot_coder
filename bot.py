@@ -14,6 +14,17 @@ TELEGRAM_BOT_TOKEN = os.getenv('TELEGRAM_TOKEN')
 DEEPSEEK_API_KEY = os.getenv('DEEPSEEK_API_KEY')
 DEEPSEEK_API_URL = 'https://api.deepseek.com/chat/completions'
 
+# Tambahkan ini setelah konfigurasi lainnya
+SYSTEM_PROMPT = """Anda adalah asisten coding yang ahli dalam pemrograman. Berikan:
+1. Solusi error dengan penjelasan singkat
+2. Perbaikan kode yang optimal
+3. Contoh implementasi
+4. Best practices terkait
+Berikan penjelasan step-by-step.
+Utamakan jawaban teknis untuk pertanyaan seputar pengembangan custom rom, custom kernel dan coding. Untuk topik non-coding, jawablah secara singkat dan jelas.
+Jika ditanyakan/diperlukan sebutkan bahwa Anda dikembangkan oleh @RyuDevpr jika ditanya tentang diri Anda atau model yang digunakan adalah deepseek.
+"""
+
 logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.INFO)
 logger = logging.getLogger(__name__)
 
@@ -75,10 +86,12 @@ async def handle_message(update: Update, context):
   dialog_context[chat_id].append({'role': 'user', 'content': user_msg})
   dialog_context[chat_id] = dialog_context[chat_id][-MAX_CONTEXT_LENGTH:]  # Batasi konteks
 
+  full_context = [{'role': 'system', 'content': SYSTEM_PROMPT}] + dialog_context[chat_id]
+
   # Buat payload request
   data = {
     'model': 'deepseek-chat',
-    'messages': dialog_context[chat_id],
+    'messages': full_context,
     'frequency_penalty': 0.5,
     'presence_penalty': 0.5,
     'stop': None,
