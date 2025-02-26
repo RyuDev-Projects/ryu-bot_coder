@@ -85,6 +85,10 @@ async def clear(update: Update, context: CallbackContext):
             'name': chat_name,
             'type': chat.type
           },
+          'model_info': {
+            'name': "DeepSeek",
+            'mode': current_mode
+          },
           'context': dialog_context[chat_id]
         }, file, indent=2, ensure_ascii=False)
 
