@@ -1,6 +1,8 @@
 import os
-import asyncio
+import re
+import json
 import logging
+from datetime import datetime
 from dotenv import load_dotenv
 from telegram import Update, ReplyKeyboardMarkup
 from telegram.ext import Application, CommandHandler, MessageHandler, filters, CallbackContext
@@ -13,6 +15,8 @@ load_dotenv()
 TELEGRAM_BOT_TOKEN = os.getenv('TELEGRAM_TOKEN')
 DEEPSEEK_API_KEY = os.getenv('DEEPSEEK_API_KEY')
 DEEPSEEK_API_URL = 'https://api.deepseek.com/chat/completions'
+CONVERSATION_DIR = "conversation"
+os.makedirs(CONVERSATION_DIR, exist_ok=True) # Buat folder jika belum ada
 
 # Tambahkan ini setelah konfigurasi lainnya
 SYSTEM_PROMPT = """Anda adalah asisten coding yang ahli dalam pemrograman. Berikan:
@@ -23,6 +27,7 @@ SYSTEM_PROMPT = """Anda adalah asisten coding yang ahli dalam pemrograman. Berik
 Berikan penjelasan step-by-step.
 Utamakan jawaban teknis untuk pertanyaan seputar pengembangan custom rom, custom kernel dan coding (selalu berikan emote roket diakhir pesannya). Untuk topik non-coding, jawablah secara singkat dan jelas.
 Jika ditanyakan/diperlukan sebutkan bahwa Anda dikembangkan oleh @RyuDevpr jika ditanya tentang diri Anda atau model yang digunakan adalah deepseek.
+Balas pengguna berdasakan bahasa yang mereka gunakan.
 """
 
 logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.INFO)
@@ -32,6 +37,13 @@ logger = logging.getLogger(__name__)
 dialog_context = {}
 current_mode = 'deepseek-chat'
 MAX_CONTEXT_LENGTH = 10
+
+def sanitize_filename(name):
+  """
+  Membersihkan nama file dari karakter khusus
+  """
+  sanitized = re.sub(r'[\\/*?:"<>|]', '-', name)
+  return sanitized.strip()[:20] # Batasi panjang nama file
 
 async def start(update: Update, context: CallbackContext):
   # Keyboard layout
@@ -51,17 +63,48 @@ async def start(update: Update, context: CallbackContext):
 
 async def clear(update: Update, context: CallbackContext):
   chat_id = update.effective_chat.id
-  # Bersihkan dialog konteks di chat ini
-  dialog_context[chat_id] = []
-  await update.message.reply_text("Konteks percakapan dibersihkan.")
+  chat = update.effective_chat
 
-async def switch_mode(update: Update, context):
+  try:
+    if chat.type in ['group', 'supergroup']:
+      chat_name = chat.title
+    else:
+      chat_name = chat.first_name or chat.username or str(chat.id)
+
+    sanitized_name = sanitize_filename(chat_name)
+    timestamp = datetime.now().strftime('%Y-%m-%d_%H-%M-%S')
+    filename = f"{sanitized_name}-{chat_id}-{timestamp}.json"
+    filepath = os.path.join(CONVERSATION_DIR, filename)
+
+    # Simpan dialog context ke file
+    if dialog_context.get(chat_id):
+      with open(filepath, 'w', encoding='utf-8') as file:
+        json.dump({
+          'chat_info': {
+            'id': chat_id,
+            'name': chat_name,
+            'type': chat.type
+          },
+          'context': dialog_context[chat_id]
+        }, file, indent=2, ensure_ascii=False)
+
+      await update.message.reply_text("ℹ️ Konteks percakapan dibersihkan.")
+      logger.info(f"Konteks disimpan ke: {filepath}")
+    else:
+      await update.message.reply_text("Tidak ada konteks percakapan yang dibersihkan.")
+  except Exception as e:
+    logger.error(f"Gagal menyimpan context: {e}")
+    await update.message.reply_text("⚠️ Terjadi kesalahan saat memuat konteks percakapan.")
+  finally:
+    dialog_context[chat_id] = []
+
+async def switch_mode(update: Update, context: CallbackContext):
   global current_mode
   # Ganti mode antara 'deepseek-chat' atau 'deepseek-reasoner'
   current_mode = 'deepseek-reasoner' if current_mode == 'deepseek-chat' else 'deepseek-chat'
-  await update.message.reply_text(f"Mode percakapan berubah menjadi {current_mode}.", parse_mode='Markdown')
+  await update.message.reply_text(f"ℹ️ Mode percakapan berubah menjadi {current_mode}.", parse_mode='Markdown')
 
-async def handle_message(update: Update, context):
+async def handle_message(update: Update, context: CallbackContext):
   # Cek asal usel pesan
   if update.effective_chat.type in ['group', 'supergroup']:
     # Cek apakah bot di tag atau ada yang merply pesannya
@@ -139,7 +182,7 @@ async def handle_message(update: Update, context):
   await context.bot.send_chat_action(chat_id=chat_id, action=ChatAction.TYPING)
 
 async def unknown_command(update: Update, context):
-  await update.message.reply_text("Perintah tersebut tidak tersedia.")
+  await update.message.reply_text("ℹ️ Perintah tersebut tidak tersedia.")
 
 async def help_command(update: Update, context):
   help_text = """
