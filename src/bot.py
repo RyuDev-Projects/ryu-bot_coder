@@ -19,15 +19,12 @@ CONVERSATION_DIR = "conversation"
 os.makedirs(CONVERSATION_DIR, exist_ok=True) # Buat folder jika belum ada
 
 # Tambahkan ini setelah konfigurasi lainnya
-SYSTEM_PROMPT = """Anda adalah asisten coding yang ahli dalam pemrograman. Berikan:
-1. Solusi error dengan penjelasan singkat
-2. Perbaikan kode yang optimal
-3. Contoh implementasi
-4. Best practices terkait
-Berikan penjelasan step-by-step.
-Utamakan jawaban teknis untuk pertanyaan seputar pengembangan custom rom, custom kernel dan coding (selalu berikan emote roket diakhir pesannya). Untuk topik non-coding, jawablah secara singkat dan jelas.
-Jika ditanyakan/diperlukan sebutkan bahwa Anda dikembangkan oleh @RyuDevpr jika ditanya tentang diri Anda atau model yang digunakan adalah deepseek.
-Balas pengguna berdasakan bahasa yang mereka gunakan.
+SYSTEM_PROMPT = """You are an advanced AI assistant named RyuBot Coder, specialized in programming,
+debugging, and generating code. You are capable of understanding complex software development concepts,
+identifying issues in code, fixing them, and generating high-quality, efficient code as required.
+Provide detailed explanations and recommendations when responding to user requests about software,
+coding, or debugging. Answer questions based on the language used by the user. If someone asks about
+you, you are an AI developed by @RyuDevpr using the DeepSeek model.
 """
 
 logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.INFO)
@@ -37,6 +34,12 @@ logger = logging.getLogger(__name__)
 dialog_context = {}
 current_mode = 'deepseek-chat'
 MAX_CONTEXT_LENGTH = 10
+
+def split_message(msg: str, max_length: int = 4096):
+  """
+  Memecah teks menjadi beberapa bagian dengan panjang maksimum tertentu
+  """
+  return [msg[i:i+max_length] for i in range(0, len(msg), max_length)]
 
 def sanitize_filename(name):
   """
@@ -95,7 +98,7 @@ async def clear(update: Update, context: CallbackContext):
       await update.message.reply_text("ℹ️ Konteks percakapan dibersihkan.")
       logger.info(f"Konteks disimpan ke: {filepath}")
     else:
-      await update.message.reply_text("Tidak ada konteks percakapan yang dibersihkan.")
+      await update.message.reply_text("Tidak ada konteks percakapan yang perlu dibersihkan.")
   except Exception as e:
     logger.error(f"Gagal menyimpan context: {e}")
     await update.message.reply_text("⚠️ Terjadi kesalahan saat memuat konteks percakapan.")
@@ -154,13 +157,9 @@ async def handle_message(update: Update, context: CallbackContext):
 
   # Buat payload request
   data = {
-    'model': 'deepseek-chat',
+    'model': current_mode,
     'messages': full_context,
-    'frequency_penalty': 0.5,
-    'presence_penalty': 0.5,
-    'stop': None,
     'temperature': 0.0,
-    'top_p': 1.0
   }
 
   # Kirim request ke API
@@ -169,20 +168,36 @@ async def handle_message(update: Update, context: CallbackContext):
       async with session.post(DEEPSEEK_API_URL, headers=headers, json=data) as response:
         response.raise_for_status()
         response_data = await response.json()
+        logger.info(f"Raw API response: {response_data}")
   except aiohttp.ClientError as e:
     logger.error(f'HTTP error: {str(e)}')
     await update.message.reply_text('⚠️ Terjadi error: Kesalahan jaringan')
+    return
   except Exception as e:
     logger.error(f'Unexpected error: {str(e)}')
     await update.message.reply_text('⚠️ Terjadi error: Permintaan gagal')
-  else:
-    # Parsing response
-    bot_response = response_data.get('choices', [{}])[0].get('message', {}).get('content', 'Gagal membuat respon.')
-    dialog_context[chat_id].append({'role': 'assistant', 'content': bot_response})
-    # Teruskan respon ke chat
-    await update.message.reply_text(bot_response, parse_mode='Markdown')
+    return
 
-  # Tmbahakn aksi mengirim
+    # Validasi response
+  if not response_data or 'choices' not in response_data or not response_data['choices']:
+    logger.error("Response API tidak valid: {}".format(response_data))
+    await update.message.reply_text("⚠️ Respon tidak valid dari AI.")
+    return
+
+  choice = response_data['choices'][0]
+  if not choice or 'message' not in choice or not choice['message']:
+    logger.error("Pilihan respon API tidak valid: {}".format(choice))
+    await update.message.reply_text("⚠️ Respon pesan tidak ditemukan dalam respon AI.")
+    return
+
+    # Parsing response
+  bot_response = choice['message'].get('content', 'Gagal membuat respon.')
+  dialog_context[chat_id].append({'role': 'assistant', 'content': bot_response})
+
+  # Split dan kirim pesan per bagian
+  message_parts = split_message(bot_response)
+  for part in message_parts:
+    await update.message.reply_text(part, parse_mode='Markdown')
   await context.bot.send_chat_action(chat_id=chat_id, action=ChatAction.TYPING)
 
 async def unknown_command(update: Update, context):
