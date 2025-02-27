@@ -53,9 +53,10 @@ def sanitize_filename(name):
 async def start(update: Update, context: CallbackContext):
   # Keyboard layout
   keyboard = [
-    ['/help'],
-    ['/clear'],
-    ['/mode']
+    ['/deephelp'],
+    ['/deepclear'],
+    ['/deepmodel'],
+    ['/deepcheck']
   ]
   # Buat keyboard markup
   reply_markup = ReplyKeyboardMarkup(keyboard, one_time_keyboard=False, resize_keyboard=True)
@@ -222,13 +223,41 @@ async def handle_message(update: Update, context: CallbackContext):
 async def unknown_command(update: Update, context):
   await update.message.reply_text("ℹ️ Perintah tersebut tidak tersedia.")
 
+async def info_mode(update: Update, context: CallbackContext):
+  chat = update.effective_chat
+
+  if chat.type in ['group', 'supergroup']:
+    title = chat.title
+  else:
+    title = chat.first_name or chat.username or str(chat.id)
+
+  gore_text = f"""
+  ⓘ *Sekedar info*
+  ━━━━━━━━━━━━━━━━━━━━
+  ⤷ `{title}`
+  ⤷ Model: `{current_mode}`
+  ⤷ Temperature: `{current_temperature}`
+
+  🤖 *Info model*
+  ━━━━━━━━━━━━━━━━━━━━
+  ⤷ *deepseek-chat*: Menggunakan model DeepSeek-V3
+  ⤷ *deepseek-reasoner*: Menggunakan model DeepSeek-R1
+
+  📝 *Penggunaan temperature*
+  ━━━━━━━━━━━━━━━━━━━━
+  ⤷ *1.3*: Percakapan general
+  ⤷ *0.0*: Fokus ke coding/perhitungan
+  """
+  await update.message.reply_text(gore_text, parse_mode='Markdown')
+
 async def help_command(update: Update, context):
   help_text = """
     Perintah tersedia:
     /start - untuk memulai bot
-    /clearbrain - untuk membersihkan konteks percakapan
-    /model - untuk berganti model "chat" atau "reasoning"
-    /help - menampilkan pesan bantuan
+    /deepclear - untuk membersihkan konteks percakapan
+    /deephelp - menampilkan pesan bantuan
+    /deepcheck - menampilkan informasi tentang mode percakapan
+    /deepmodel - untuk berganti model "chat" atau "reasoning"
     """
   await update.message.reply_text(help_text)
 
@@ -236,9 +265,10 @@ def main():
   application = Application.builder().token(TELEGRAM_BOT_TOKEN).build()
 
   application.add_handler(CommandHandler('start', start))
-  application.add_handler(CommandHandler('clearbrain', clear))
-  application.add_handler(CommandHandler('model', switch_mode))
-  application.add_handler(CommandHandler('help', help_command))
+  application.add_handler(CommandHandler('deepclear', clear))
+  application.add_handler(CommandHandler('deepmodel', switch_mode))
+  application.add_handler(CommandHandler('deephelp', help_command))
+  application.add_handler(CommandHandler('deepcheck', info_mode))
   application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
   application.add_handler(MessageHandler(filters.COMMAND, unknown_command))
 
