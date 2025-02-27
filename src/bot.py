@@ -4,7 +4,7 @@ import json
 import logging
 from datetime import datetime
 from dotenv import load_dotenv
-from telegram import Update, ReplyKeyboardMarkup
+from telegram import Update, ReplyKeyboardMarkup, error
 from telegram.ext import Application, CommandHandler, MessageHandler, filters, CallbackContext
 from telegram.constants import ChatAction
 import aiohttp
@@ -33,6 +33,7 @@ logger = logging.getLogger(__name__)
 # Inisialisasi percakapan dan mode
 dialog_context = {}
 current_mode = 'deepseek-chat'
+current_temperature = 1.3
 MAX_CONTEXT_LENGTH = 10
 
 def split_message(msg: str, max_length: int = 4096):
@@ -46,6 +47,7 @@ def sanitize_filename(name):
   Membersihkan nama file dari karakter khusus
   """
   sanitized = re.sub(r'[\\/*?:"<>|]', '-', name)
+  sanitized = re.sub(r'\s+', '-', sanitized)
   return sanitized.strip()[:20] # Batasi panjang nama file
 
 async def start(update: Update, context: CallbackContext):
@@ -106,12 +108,22 @@ async def clear(update: Update, context: CallbackContext):
     dialog_context[chat_id] = []
 
 async def switch_mode(update: Update, context: CallbackContext):
-  global current_mode
+  global current_mode, current_temperature
   # Ganti mode antara 'deepseek-chat' atau 'deepseek-reasoner'
-  current_mode = 'deepseek-reasoner' if current_mode == 'deepseek-chat' else 'deepseek-chat'
-  await update.message.reply_text(f"ℹ️ Mode percakapan berubah menjadi {current_mode}.", parse_mode='Markdown')
+  if current_mode == 'deepseek-chat':
+    current_mode = 'deepseek-reasoner'
+    current_temperature = 0.0
+  else:
+    current_mode = 'deepseek-chat'
+    current_temperature = 1.3
+  await update.message.reply_text(f"ℹ️ Mode percakapan berubah menjadi {current_mode} dengan temperature {current_temperature}.", parse_mode='Markdown')
 
 async def handle_message(update: Update, context: CallbackContext):
+  user = update.effective_user
+  username = user.username or f"{user.first_name} {user.last_name}".strip() or str(user.id)
+
+  logger.info(f"\nPertanyaan dari user: @{username}\nModel: {current_mode}\nTemperature: {current_temperature}")
+
   # Cek asal usel pesan
   if update.effective_chat.type in ['group', 'supergroup']:
     # Cek apakah bot di tag atau ada yang merply pesannya
@@ -159,7 +171,7 @@ async def handle_message(update: Update, context: CallbackContext):
   data = {
     'model': current_mode,
     'messages': full_context,
-    'temperature': 0.0,
+    'temperature': current_temperature,
   }
 
   # Kirim request ke API
@@ -168,7 +180,7 @@ async def handle_message(update: Update, context: CallbackContext):
       async with session.post(DEEPSEEK_API_URL, headers=headers, json=data) as response:
         response.raise_for_status()
         response_data = await response.json()
-        logger.info(f"Raw API response: {response_data}")
+        # logger.info(f"Raw API response: {response_data}")
   except aiohttp.ClientError as e:
     logger.error(f'HTTP error: {str(e)}')
     await update.message.reply_text('⚠️ Terjadi error: Kesalahan jaringan')
@@ -190,14 +202,21 @@ async def handle_message(update: Update, context: CallbackContext):
     await update.message.reply_text("⚠️ Respon pesan tidak ditemukan dalam respon AI.")
     return
 
-    # Parsing response
   bot_response = choice['message'].get('content', 'Gagal membuat respon.')
   dialog_context[chat_id].append({'role': 'assistant', 'content': bot_response})
 
   # Split dan kirim pesan per bagian
   message_parts = split_message(bot_response)
   for part in message_parts:
-    await update.message.reply_text(part, parse_mode='Markdown')
+    try:
+      await update.message.reply_text(part, parse_mode='Markdown')
+    except error.BadRequest as e:
+      logger.error(f"\nError sending message: {e}\n")
+      await update.message.reply_text(part)
+    except Exception as e:
+      logger.error(f"\nError sending message: {e}\n")
+      await update.message.reply_text("⚠️ Terjadi kesalahan saat mengirim pesan.")
+  logger.info(f"Respons berhasil dikirim kepada user: @{username}\n")
   await context.bot.send_chat_action(chat_id=chat_id, action=ChatAction.TYPING)
 
 async def unknown_command(update: Update, context):
@@ -207,8 +226,8 @@ async def help_command(update: Update, context):
   help_text = """
     Perintah tersedia:
     /start - untuk memulai bot
-    /clear - untuk membersihkan konteks percakapan
-    /mode - untuk berganti model chat atau reasoning
+    /clearbrain - untuk membersihkan konteks percakapan
+    /model - untuk berganti model "chat" atau "reasoning"
     /help - menampilkan pesan bantuan
     """
   await update.message.reply_text(help_text)
@@ -217,14 +236,13 @@ def main():
   application = Application.builder().token(TELEGRAM_BOT_TOKEN).build()
 
   application.add_handler(CommandHandler('start', start))
-  application.add_handler(CommandHandler('clear', clear))
-  application.add_handler(CommandHandler('mode', switch_mode))
+  application.add_handler(CommandHandler('clearbrain', clear))
+  application.add_handler(CommandHandler('model', switch_mode))
   application.add_handler(CommandHandler('help', help_command))
   application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
   application.add_handler(MessageHandler(filters.COMMAND, unknown_command))
 
   application.run_polling(allowed_updates=Update.ALL_TYPES)
-  logger.info("Bot berjalan")
 
 if __name__ == '__main__':
   main()
